@@ -1,0 +1,73 @@
+# Iris Data
+data <- read.csv("C:\\Users\\Larry Williams\\Desktop\\Mamata\\Edvancer\\data\\data\\Iris.csv")
+#data$NSP <- factor(data$NSP)
+head(data)
+
+# Partition Data
+set.seed(111)
+ind <- sample(2, nrow(data), 
+              replace = TRUE, 
+              prob = c(.8, .2))
+training <- data[ind==1,]
+testing <- data[ind==2,]
+
+# Scatter Plots & Correlations
+library(psych)
+pairs.panels(training[,-c(1,6)], 
+             gap=0,
+             bg=c("red","yellow","blue")[training$NSP],
+             pch=21)
+
+# PCA
+training
+pc <- prcomp(training[,-c(1,6)],
+             center = TRUE,
+             scale. = TRUE)
+attributes(pc)
+print(pc)
+summary(pc)
+plot(pc, type = "lines")
+
+# Orthogonality of PCs
+pairs.panels(pc$x, 
+             gap=0,
+             bg=c("red","yellow","blue")[training$NSP],
+             pch=21)
+# Bi-Plot
+library(devtools)
+#install_github("ggbiplot", "vqv")
+library(ggbiplot)
+g <- ggbiplot(pc, 
+              obs.scale = 1, 
+              var.scale = 1, 
+              groups = training$NSP, 
+              ellipse = TRUE, 
+              circle = TRUE,
+              ellipse.prob = 0.68)
+g <- g + scale_color_discrete(name = '')
+g <- g + theme(legend.direction = 'horizontal', 
+               legend.position = 'top')
+print(g)
+
+# Prediction with Principal Components
+trg <- predict(pc, training)
+trg <- data.frame(trg, training[6])
+tst <- predict(pc, testing)
+tst <- data.frame(tst, testing[6])
+
+# Multinomial Logistic regression with 1st two PCs
+library(nnet)
+mymodel <- multinom(Species~PC1+PC2+PC3+PC4, data=trg)
+summary(mymodel)
+
+# Misclassification error & Confusion matrix - training
+p <- predict(mymodel, trg)
+tab <- table(p, trg$Species)
+tab
+1-sum(diag(tab))/sum(tab)
+
+# Misclassification error & Confusion matrix - Testing
+p1 <- predict(mymodel, tst)
+tab1 <- table(p1, tst$Species)
+tab1
+1-sum(diag(tab1))/sum(tab1)
