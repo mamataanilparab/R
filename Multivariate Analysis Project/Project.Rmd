@@ -1,0 +1,412 @@
+---
+title: "FP_MVA"
+author: "Sreehitha Nelluri"
+date: "25/11/2021"
+output: html_document
+---
+
+
+```{r}
+
+library(MVA)
+library(mlmi)
+library(PCAmixdata)
+library("GGally")
+library(reshape2)
+library(ggplot2)
+library(VIM)
+library(mice)
+library(tidyverse)
+library(miceadds)
+
+#Data cleaning
+
+init_data <- read.csv("C:\\Users\\nvbr\\Documents\\import_85.csv")
+init_data
+
+#removing the inserted data at the end (new cars don't have some data accordingly)
+
+init_data_1<- init_data[,1:29]
+init_data_1
+
+#missing data metrics
+colSums(is.na(init_data_1))
+
+#visualizing missing data
+
+md.pattern(init_data_1)
+
+#************************Data Cleaning & Visualization*********************
+
+
+#Using Multiple imputation
+
+imputed_data <- mice(init_data_1, m=20, method = "pmm")
+summary(imputed_data)
+
+aggr(x = init_data)
+
+#Analysing the imputed data with reg exp
+
+model <- with(data=imputed_data, exp=lm(symboling ~ normalized.losses + bore + stroke + horsepower + peak.rpm + price))
+
+summary(pool(model))
+
+#rsquare
+
+pool.r.squared(pool(model))
+
+#taking data from 10th iteration
+
+imp_tot2 <- complete(imputed_data, 5)
+
+aggr(imp_tot2, 
+     delimiter="_imp", 
+     numbers=TRUE, 
+     prop=c(TRUE,FALSE),
+     combined = TRUE)
+
+# imputing for categorical data
+
+imp_tot2[is.na(imp_tot2)]<-"four"
+
+#replacing the incorrect data
+
+imp_tot2[imp_tot2=="4wd"]<-"fwd"
+
+#visualing after cleaning
+
+aggr(x = imp_tot2)
+
+```
+
+```{r}
+# taking Automobile data for New car type
+
+imp_tot2_n<- filter(imp_tot2,car_type =="New")
+
+#adding the sequence column to use for unique rownames
+
+imp_tot2_n$ID <- seq.int(nrow(imp_tot2_n))
+
+library("dplyr")
+
+#separting the categorical data
+
+imp_tot2_cat <- imp_tot2_n[, !(names(imp_tot2_n) %in% names(imp_tot2_n %>% select_if(is.numeric)))]
+
+#assigning categorical data as rownames 
+
+#row.names(imp_tot2_n) <- paste(imp_tot2_n$make, "|",imp_tot2_n$engine.type, "|",imp_tot2_n$num.of.cylinders ,"|",imp_tot2_n$fuel.system, "|" ,imp_tot2_n$ID)
+
+
+row.names(imp_tot2_n) <- paste(imp_tot2_n$make,  "|" ,imp_tot2_n$ID)
+
+#seperating numerical data with rownames
+
+imp_tot2_num<- select_if(imp_tot2_n, is.numeric)
+
+#remove seq id
+
+imp_tot2_num<- imp_tot2_num[,1:ncol(imp_tot2_num)-1]
+
+# year adds no value after scaling , removing it for PCA
+
+sb<- subset(imp_tot2_num,select=-c(Manufacture_Year))
+
+#******************Dimension Reduction*************
+
+#PCA
+
+R.pca <- princomp(scale(sb), cor = TRUE)
+
+summary(R.pca)
+
+R.pca$loadings[,1:5]
+
+biplot(R.pca, col = c("black","red"), cex = 0.6)
+
+
+
+#Factor Analysis
+
+sb.fa <- factanal(sb, factors = 3)
+
+sb.fa$uniquenesses
+
+
+group=order(sb.fa$uniquenesses)
+uniq<-sb.fa$uniquenesses[group]
+clustergrp<-data.frame(uniq)
+clustergrp
+
+sb.fa.varimax <- factanal(sb, factors = 3, rotation = "varimax")
+
+Rcor <- sb.fa.varimax$loadings %*% t(sb.fa.varimax$loadings) + diag(sb.fa.varimax$uniquenesses)
+
+rmse <- sqrt(mean((cor(sb) - Rcor)^2))
+rmse
+
+
+factors_impact<- sb[,c('city.mpg','highway.mpg','curb.weight','length','wheel.base','engine.size','horsepower')]
+
+
+factors_impact.fa <- factanal(factors_impact, factors = 2)
+
+
+
+#dm<-dist(scale(imp_tot2_num))
+
+
+#************************Cluster Analysis**************************
+
+
+
+plot.wgss <- function(mydata, maxc){
+wss <- numeric(maxc)
+for (i in 1:maxc){
+wss[i] <- kmeans(mydata, iter.max = 100,
+centers = i, nstart = 10)$tot.withinss
+}
+plot(1:maxc, wss, type = "b",
+xlab = "Number of Clusters",
+ylab = "Within Groups Sum of Squares",
+main = "Scree Plot")
+}
+
+
+
+plot.wgss(dist(scale(imp_tot2_num)), 10)
+
+km <- kmeans(dist(scale(imp_tot2_num)), centers = 5, nstart = 10)
+km$tot.withinss
+km$clusters
+
+library('factoextra')
+
+fviz_cluster(km, sb, ellipse.type = "norm")
+
+
+```
+
+
+
+
+```{r}
+
+
+
+#*******************Confirmatory Factory Analysis*********************
+
+
+#install.packages("sem")
+
+
+library(sem)
+
+library(semPlot)
+
+factors_impact_1<- sb[,c('city.mpg','highway.mpg','curb.weight','length','wheel.base','engine.size','horsepower','symboling','normalized.losses','price')]
+
+r<-cor(factors_impact_1)
+
+car_demand_model <- specifyModel(text = "
+car_fuel_eff -> city.mpg , lambda1, NA
+car_fuel_eff -> highway.mpg   , lambda2, NA
+car_performance -> length , lambda3, NA
+car_performance -> curb.weight , lambda4, NA
+car_performance -> engine.size , lambda5, NA
+car_performance-> wheel.base , lambda7, NA
+car_performance -> horsepower , lambda8, NA
+
+car_fuel_eff <-> car_performance, rho , NA
+
+city.mpg <-> city.mpg , theta1, NA
+highway.mpg <-> highway.mpg   , theta2, NA
+length <-> length , theta3, NA
+curb.weight <-> curb.weight , theta4, NA
+engine.size <-> engine.size , theta5, NA
+wheel.base<-> wheel.base , theta7, NA
+horsepower <-> horsepower , theta8, NA
+
+car_fuel_eff <-> car_fuel_eff , NA , 1
+car_performance <-> car_performance, NA , 1
+")
+
+options(fit.indices = c("GFI", "AGFI", "SRMR"))
+
+car_demand_sem <- sem(car_demand_model, cor(factors_impact), nrow(factors_impact))
+summary(car_demand_sem)
+
+# path diagram
+semPaths(car_demand_sem, rotation = 2, 'est')
+
+
+
+
+
+
+```
+```{r}
+
+#**************************Used Cars******************************
+
+imp_tot2_n<- filter(imp_tot2,car_type =="Used")
+
+#adding the sequence column to use for unique rownames
+
+imp_tot2_n$ID <- seq.int(nrow(imp_tot2_n))
+
+library("dplyr")
+
+#separting the categorical data
+
+imp_tot2_cat <- imp_tot2_n[, !(names(imp_tot2_n) %in% names(imp_tot2_n %>% select_if(is.numeric)))]
+
+#assigning categorical data as rownames 
+
+#row.names(imp_tot2_n) <- paste(imp_tot2_n$make, "|",imp_tot2_n$engine.type, "|",imp_tot2_n$num.of.cylinders ,"|",imp_tot2_n$fuel.system, "|" ,imp_tot2_n$ID)
+
+
+row.names(imp_tot2_n) <- paste(imp_tot2_n$make,  "|" ,imp_tot2_n$ID)
+
+#seperating numerical data with rownames
+
+imp_tot2_num<- select_if(imp_tot2_n, is.numeric)
+
+#remove seq id
+
+imp_tot2_num<- imp_tot2_num[,1:ncol(imp_tot2_num)-1]
+
+# year adds no value after scaling , removing it for PCA
+
+sb<- subset(imp_tot2_num,select=-c(Manufacture_Year))
+
+#******************Dimension Reduction*************
+
+#PCA
+
+R.pca <- princomp(scale(sb), cor = TRUE)
+
+summary(R.pca)
+
+R.pca$loadings[,1:5]
+
+biplot(R.pca, col = c("black","red"), cex = 0.6)
+
+
+
+#Factor Analysis
+
+sb.fa <- factanal(sb, factors = 3)
+
+sb.fa$uniquenesses
+
+
+group=order(sb.fa$uniquenesses)
+uniq<-sb.fa$uniquenesses[group]
+clustergrp<-data.frame(uniq)
+clustergrp
+
+sb.fa.varimax <- factanal(sb, factors = 3, rotation = "varimax")
+
+Rcor <- sb.fa.varimax$loadings %*% t(sb.fa.varimax$loadings) + diag(sb.fa.varimax$uniquenesses)
+
+rmse <- sqrt(mean((cor(sb) - Rcor)^2))
+rmse
+
+
+factors_impact<- sb[,c('city.mpg','highway.mpg','curb.weight','length','wheel.base','engine.size','horsepower')]
+
+
+factors_impact.fa <- factanal(factors_impact, factors = 2)
+
+
+
+#dm<-dist(scale(imp_tot2_num))
+
+
+#************************Cluster Analysis**************************
+
+
+
+plot.wgss <- function(mydata, maxc){
+wss <- numeric(maxc)
+for (i in 1:maxc){
+wss[i] <- kmeans(mydata, iter.max = 100,
+centers = i, nstart = 10)$tot.withinss
+}
+plot(1:maxc, wss, type = "b",
+xlab = "Number of Clusters",
+ylab = "Within Groups Sum of Squares",
+main = "Scree Plot")
+}
+
+
+
+plot.wgss(dist(scale(imp_tot2_num)), 10)
+
+km <- kmeans(dist(scale(imp_tot2_num)), centers = 5, nstart = 10)
+km$tot.withinss
+km$clusters
+
+library('factoextra')
+
+fviz_cluster(km, sb, ellipse.type = "norm")
+
+
+```
+
+```{r}
+
+#*******************Confirmatory Factory Analysis*********************
+
+
+#install.packages("sem")
+
+
+library(sem)
+
+library(semPlot)
+
+factors_impact_1<- sb[,c('city.mpg','highway.mpg','curb.weight','length','wheel.base','engine.size','horsepower','symboling','normalized.losses','price')]
+
+r<-cor(factors_impact_1)
+
+car_demand_model <- specifyModel(text = "
+car_fuel_eff -> city.mpg , lambda1, NA
+car_fuel_eff -> highway.mpg   , lambda2, NA
+car_performance -> length , lambda3, NA
+car_performance -> curb.weight , lambda4, NA
+car_performance -> engine.size , lambda5, NA
+car_performance-> wheel.base , lambda7, NA
+car_performance -> horsepower , lambda8, NA
+
+car_fuel_eff <-> car_performance, rho , NA
+
+city.mpg <-> city.mpg , theta1, NA
+highway.mpg <-> highway.mpg   , theta2, NA
+length <-> length , theta3, NA
+curb.weight <-> curb.weight , theta4, NA
+engine.size <-> engine.size , theta5, NA
+wheel.base<-> wheel.base , theta7, NA
+horsepower <-> horsepower , theta8, NA
+
+car_fuel_eff <-> car_fuel_eff , NA , 1
+car_performance <-> car_performance, NA , 1
+")
+
+options(fit.indices = c("GFI", "AGFI", "SRMR"))
+
+car_demand_sem <- sem(car_demand_model, cor(factors_impact), nrow(factors_impact))
+summary(car_demand_sem)
+
+# path diagram
+semPaths(car_demand_sem, rotation = 2, 'est')
+
+
+
+
+
+
+```
