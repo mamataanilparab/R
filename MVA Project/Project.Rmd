@@ -1,11 +1,3 @@
----
-title: "FP_MVA"
-author: "Sreehitha Nelluri"
-date: "25/11/2021"
-output: html_document
----
-
-
 ```{r}
 
 library(MVA)
